@@ -24,6 +24,7 @@
 - VMess, VLESS, Shadowsocks, Trojan, Snell, TUIC, Hysteria protocol support
 - Built-in DNS server that aims to minimize DNS pollution attack impact, supports DoH/DoT upstream and fake IP.
 - Rules based off domains, GEOIP, IPCIDR or Process to forward packets to different nodes
+- EasyTier mesh outbound (`type: easytier`) via embedded easytier-go or `libeasytier_ffi` data plane (no TUN); see [docs/easytier-ffi.md](docs/easytier-ffi.md)
 - Remote groups allow users to implement powerful rules. Supports automatic fallback, load balancing or auto select node
   based off latency
 - Remote providers, allowing users to get node lists remotely instead of hard-coding in config

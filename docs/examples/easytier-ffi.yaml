@@ -1,0 +1,32 @@
+# EasyTier FFI outbound example. Replace every CHANGE_ME_* placeholder.
+# Do not commit real mesh names, secrets, or peer endpoints.
+mixed-port: 7890
+mode: rule
+log-level: info
+
+proxies:
+  - name: easytier
+    type: easytier
+    # Must be under the mihomo home dir or SAFE_PATHS.
+    ffi-library: ./libeasytier_ffi.so
+    instance-name: mihomo-easytier
+    # Use config or config-file, not both.
+    config: |
+      instance_name = "mihomo-easytier"
+      ipv4 = "10.77.0.10"
+
+      [network_identity]
+      network_name = "CHANGE_ME_NETWORK"
+      network_secret = "CHANGE_ME_SECRET"
+
+      [[peer]]
+      uri = "tcp://203.0.113.10:11010"
+
+      [flags]
+      no_tun = true
+    # config-file: ./easytier.toml
+    udp: true
+
+rules:
+  - IP-CIDR,10.77.0.0/24,easytier
+  - MATCH,DIRECT

@@ -1436,6 +1436,28 @@ proxies: # socks5
     # routing-mark: 6666
     # ip-version: ipv4-prefer
 
+  # easytier (FFI data plane, no TUN)
+  # requires libeasytier_ffi built with c-abi + ffi-dataplane; see docs/easytier-ffi.md
+  # ffi-library must be under homedir or SAFE_PATHS
+  - name: "easytier-ffi"
+    type: easytier
+    ffi-library: ./libeasytier_ffi.so
+    instance-name: mihomo-easytier # must match instance_name / inst_name in the TOML
+    # config-file: ./easytier.toml # exactly one of config / config-file
+    config: |
+      instance_name = "mihomo-easytier"
+      ipv4 = "10.77.0.10"
+      [network_identity]
+      network_name = "CHANGE_ME_NETWORK"
+      network_secret = "CHANGE_ME_SECRET"
+      [[peer]]
+      uri = "tcp://203.0.113.10:11010"
+      [flags]
+      no_tun = true
+    udp: true
+    # FFI ABI v3 accepts IPv4 overlay targets only; hostnames are resolved locally
+    # interface-name/routing-mark/dialer-proxy do not apply inside libeasytier_ffi
+
   # openvpn
   - name: "openvpn"
     type: openvpn
