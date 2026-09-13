@@ -41,6 +41,9 @@ type EasyTierOption struct {
 	SecureMode          *bool    `proxy:"secure-mode,omitempty"`
 	LocalPrivateKey     string   `proxy:"local-private-key,omitempty"`
 	LocalPublicKey      string   `proxy:"local-public-key,omitempty"`
+	FFILibrary          string   `proxy:"ffi-library,omitempty"`
+	Config              string   `proxy:"config,omitempty"`
+	ConfigFile          string   `proxy:"config-file,omitempty"`
 }
 
 func NewEasyTier(EasyTierOption) (*EasyTier, error) {

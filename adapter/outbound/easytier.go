@@ -14,13 +14,13 @@ import (
 	"sync"
 
 	"github.com/metacubex/mihomo/component/easytier"
+	"github.com/metacubex/mihomo/component/easytierffi"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
 
 	corehost "github.com/easytier/easytier/easytier-go"
-	D "github.com/miekg/dns"
 )
 
 const (
@@ -46,6 +46,14 @@ type EasyTier struct {
 	host       *corehost.Host
 	instance   *corehost.Instance
 	unregister func()
+	ffi        *easytierffi.Native
+	ffiLibPath string
+	ffiSession *easytierffi.Session
+	startedFFI bool
+}
+
+func (e *EasyTier) usingFFI() bool {
+	return e.ffiLibPath != ""
 }
 
 type EasyTierOption struct {
@@ -81,6 +89,9 @@ type EasyTierOption struct {
 	SecureMode          *bool    `proxy:"secure-mode,omitempty"`
 	LocalPrivateKey     string   `proxy:"local-private-key,omitempty"`
 	LocalPublicKey      string   `proxy:"local-public-key,omitempty"`
+	FFILibrary          string   `proxy:"ffi-library,omitempty"`
+	Config              string   `proxy:"config,omitempty"`
+	ConfigFile          string   `proxy:"config-file,omitempty"`
 }
 
 func (o EasyTierOption) structuredConfig() easytier.Config {
@@ -121,6 +132,9 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 }
 
 func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
+	if strings.TrimSpace(option.FFILibrary) != "" {
+		return newEasyTierFFI(option)
+	}
 	configTOML, err := option.structuredConfig().RenderTOML()
 	if err != nil {
 		return nil, err
@@ -165,6 +179,9 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 }
 
 func (e *EasyTier) start() error {
+	if e.usingFFI() {
+		return e.startFFI()
+	}
 	e.startOnce.Do(func() {
 		if err := e.init(); err != nil {
 			e.startErr = err
@@ -301,6 +318,9 @@ func (e *EasyTier) resolveIPv4(ctx context.Context, host string) (netip.Addr, er
 }
 
 func (e *EasyTier) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
+	if e.usingFFI() {
+		return e.dialFFI(ctx, metadata)
+	}
 	if err = e.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
@@ -328,6 +348,9 @@ func (e *EasyTier) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.C
 }
 
 func (e *EasyTier) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (_ C.PacketConn, err error) {
+	if e.usingFFI() {
+		return e.listenFFI(ctx, metadata)
+	}
 	if err = e.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
@@ -349,6 +372,9 @@ func (e *EasyTier) ListenPacketContext(ctx context.Context, metadata *C.Metadata
 }
 
 func (e *EasyTier) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+	if e.usingFFI() {
+		return e.Base.ResolveUDP(ctx, metadata)
+	}
 	if metadata.Host != "" {
 		ip, err := e.resolveIPv4(ctx, metadata.Host)
 		if err != nil {
@@ -374,6 +400,9 @@ func (e *EasyTier) IsL3Protocol(*C.Metadata) bool {
 }
 
 func (e *EasyTier) Close() error {
+	if e.usingFFI() {
+		return e.closeFFI()
+	}
 	e.cancel()
 	if e.unregister != nil {
 		e.unregister()
@@ -403,78 +432,4 @@ func (e *EasyTier) shutdown() error {
 		}
 	}
 	return err
-}
-
-type easyTierDNSTransport struct {
-	easytier *EasyTier
-}
-
-func (t easyTierDNSTransport) Address() string {
-	return "easytier://" + t.easytier.Name()
-}
-
-func (t easyTierDNSTransport) ResetConnection() {}
-
-func (t easyTierDNSTransport) ExchangeContext(ctx context.Context, msg *D.Msg) (*D.Msg, error) {
-	if len(msg.Question) == 0 {
-		return nil, errors.New("should have one question at least")
-	}
-	if err := t.easytier.ensureStarted(ctx); err != nil {
-		return nil, err
-	}
-	q := msg.Question[0]
-	nodes, err := t.easytier.overlayNodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	reply := new(D.Msg)
-	reply.SetReply(msg)
-	reply.Authoritative = true
-	reply.RecursionAvailable = true
-	switch q.Qtype {
-	case D.TypeA:
-		ip, ok := easytier.LookupOverlayHost(q.Name, t.easytier.zone, nodes)
-		if !ok {
-			reply.Rcode = D.RcodeNameError
-			return reply, nil
-		}
-		reply.Answer = append(reply.Answer, &D.A{
-			Hdr: D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: easyTierDNSTTL},
-			A:   ip.AsSlice(),
-		})
-	case D.TypePTR:
-		ip, ok := easytier.ParsePTRIPv4(q.Name)
-		if !ok {
-			reply.Rcode = D.RcodeNameError
-			return reply, nil
-		}
-		name, ok := easytier.LookupOverlayPTR(ip, t.easytier.zone, nodes)
-		if !ok {
-			reply.Rcode = D.RcodeNameError
-			return reply, nil
-		}
-		reply.Answer = append(reply.Answer, &D.PTR{
-			Hdr: D.RR_Header{Name: q.Name, Rrtype: D.TypePTR, Class: D.ClassINET, Ttl: easyTierDNSTTL},
-			Ptr: name,
-		})
-	default:
-		reply.Rcode = D.RcodeSuccess
-	}
-	return reply, nil
-}
-
-func loadInstanceID(stateDir string) string {
-	contents, err := os.ReadFile(filepath.Join(stateDir, easyTierInstanceIDFile))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(contents))
-}
-
-func writeInstanceID(stateDir, id string) error {
-	if id == "" {
-		return nil
-	}
-	path := filepath.Join(stateDir, easyTierInstanceIDFile)
-	return os.WriteFile(path, []byte(id+"\n"), 0o600)
 }
