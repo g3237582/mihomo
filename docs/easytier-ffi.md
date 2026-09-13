@@ -112,6 +112,11 @@ or `curl` against whatever HTTP service is reachable on the overlay CIDR
 matched by `IP-CIDR`. Success is a completed TCP response from the peer,
 not merely "instance started" in the log.
 
+On linux/amd64, `DataPlaneSocketAddr` (20 bytes) is a SysV MEMORY argument
+and is passed on the stack, not as a register pointer. The binding uses
+`purego.SyscallN` for `tcp_connect_submit` / `udp_send_submit` for that
+reason.
+
 Unit tests compile a tiny C stub (not EasyTier) and only prove the ABI
 binding on linux/amd64:
 

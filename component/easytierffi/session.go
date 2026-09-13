@@ -208,7 +208,7 @@ func (s *Session) DialContext(ctx context.Context, network, address string) (net
 	}
 	timeoutMS := timeoutMillis(ctx)
 	op, err := s.submitAndWait(ctx, func(out *uint64) int32 {
-		return s.n.tcpConnectSubmit(s.id, &addr, timeoutMS, out)
+		return s.n.callTCPConnectSubmit(s.id, addr, timeoutMS, out)
 	})
 	if err != nil {
 		return nil, err
@@ -295,7 +295,7 @@ func (s *Session) udpSend(ctx context.Context, socket uint64, addr SocketAddr, b
 		return 0, nil
 	}
 	op, err := s.submitAndWait(ctx, func(out *uint64) int32 {
-		return s.n.udpSendSubmit(s.id, socket, &addr, &buf[0], uint32(len(buf)), out)
+		return s.n.callUDPSendSubmit(s.id, socket, addr, &buf[0], uint32(len(buf)), out)
 	})
 	if err != nil {
 		return 0, err

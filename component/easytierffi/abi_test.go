@@ -36,6 +36,24 @@ func TestIPv6Rejected(t *testing.T) {
 	}
 }
 
+func TestSocketAddrStackPacking(t *testing.T) {
+	addr, err := ipv4SocketAddr(net.ParseIP("10.77.0.8"), 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words := socketAddrStack(addr)
+	raw := (*[20]byte)(unsafe.Pointer(&words[0]))
+	if raw[0] != 4 || raw[1] != 0 {
+		t.Fatalf("family bytes = %v", raw[:2])
+	}
+	if uint16(raw[2])|uint16(raw[3])<<8 != 443 {
+		t.Fatalf("port bytes = %v", raw[2:4])
+	}
+	if raw[4] != 10 || raw[5] != 77 || raw[6] != 0 || raw[7] != 8 {
+		t.Fatalf("ipv4 bytes = %v", raw[4:8])
+	}
+}
+
 func TestParseIPPort(t *testing.T) {
 	ip, port, err := parseIPPort("10.77.0.1:22")
 	if err != nil {

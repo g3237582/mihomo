@@ -21,7 +21,7 @@ type Native struct {
 	freeString             func(*byte)
 	sessionOpen            func(*byte, *uint64) int32
 	sessionClose           func(uint64) int32
-	tcpConnectSubmit       func(uint64, *SocketAddr, uint64, *uint64) int32
+	tcpConnectSubmitSym    uintptr
 	tcpConnectTake         func(uint64, uint64, *uint64, *SocketAddr, *SocketAddr) int32
 	tcpReadSubmit          func(uint64, uint64, uint32, *uint64) int32
 	tcpReadTake            func(uint64, uint64, *byte, uint32, *uint32, *bool) int32
@@ -29,7 +29,7 @@ type Native struct {
 	tcpWriteTake           func(uint64, uint64, *uint32) int32
 	udpBindSubmit          func(uint64, uint16, uint64, *uint64) int32
 	udpBindTake            func(uint64, uint64, *uint64, *SocketAddr) int32
-	udpSendSubmit          func(uint64, uint64, *SocketAddr, *byte, uint32, *uint64) int32
+	udpSendSubmitSym       uintptr
 	udpSendTake            func(uint64, uint64, *uint32) int32
 	udpReceiveSubmit       func(uint64, uint64, uint32, *uint64) int32
 	udpReceiveTake         func(uint64, uint64, *byte, uint32, *uint32, *SocketAddr, *bool) int32
@@ -81,7 +81,6 @@ func (n *Native) bind() error {
 		{&n.freeString, "free_string"},
 		{&n.sessionOpen, "data_plane_session_open"},
 		{&n.sessionClose, "data_plane_session_close"},
-		{&n.tcpConnectSubmit, "data_plane_tcp_connect_submit"},
 		{&n.tcpConnectTake, "data_plane_tcp_connect_result_take"},
 		{&n.tcpReadSubmit, "data_plane_tcp_read_submit"},
 		{&n.tcpReadTake, "data_plane_tcp_read_result_take"},
@@ -89,7 +88,6 @@ func (n *Native) bind() error {
 		{&n.tcpWriteTake, "data_plane_tcp_write_result_take"},
 		{&n.udpBindSubmit, "data_plane_udp_bind_submit"},
 		{&n.udpBindTake, "data_plane_udp_bind_result_take"},
-		{&n.udpSendSubmit, "data_plane_udp_send_submit"},
 		{&n.udpSendTake, "data_plane_udp_send_result_take"},
 		{&n.udpReceiveSubmit, "data_plane_udp_receive_submit"},
 		{&n.udpReceiveTake, "data_plane_udp_receive_result_take"},
@@ -105,7 +103,58 @@ func (n *Native) bind() error {
 			return err
 		}
 	}
+	var err error
+	if n.tcpConnectSubmitSym, err = purego.Dlsym(n.lib, "data_plane_tcp_connect_submit"); err != nil {
+		return err
+	}
+	if n.udpSendSubmitSym, err = purego.Dlsym(n.lib, "data_plane_udp_send_submit"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// socketAddrStack packs DataPlaneSocketAddr for SysV MEMORY-class stack passing.
+func socketAddrStack(addr SocketAddr) [3]uintptr {
+	var words [3]uintptr
+	src := unsafe.Slice((*byte)(unsafe.Pointer(&addr)), int(unsafe.Sizeof(addr)))
+	dst := unsafe.Slice((*byte)(unsafe.Pointer(&words[0])), int(unsafe.Sizeof(words)))
+	copy(dst, src)
+	return words
+}
+
+// callTCPConnectSubmit uses SyscallN because the 20-byte addr is passed on the
+// stack (SysV MEMORY), not as a register pointer. RegisterLibFunc cannot do that
+// on linux. Layout: rdi=session, rsi=timeout, rdx=out; stack=addr.
+func (n *Native) callTCPConnectSubmit(session uint64, addr SocketAddr, timeoutMS uint64, out *uint64) int32 {
+	words := socketAddrStack(addr)
+	r1, _, _ := purego.SyscallN(n.tcpConnectSubmitSym,
+		uintptr(session),
+		uintptr(timeoutMS),
+		uintptr(unsafe.Pointer(out)),
+		0, 0, 0,
+		words[0], words[1], words[2],
+	)
+	runtime.KeepAlive(addr)
+	runtime.KeepAlive(out)
+	return int32(r1)
+}
+
+// callUDPSendSubmit: rdi=session, rsi=socket, rdx=data, rcx=len, r8=out; stack=addr.
+func (n *Native) callUDPSendSubmit(session, socket uint64, addr SocketAddr, data *byte, length uint32, out *uint64) int32 {
+	words := socketAddrStack(addr)
+	r1, _, _ := purego.SyscallN(n.udpSendSubmitSym,
+		uintptr(session),
+		uintptr(socket),
+		uintptr(unsafe.Pointer(data)),
+		uintptr(length),
+		uintptr(unsafe.Pointer(out)),
+		0,
+		words[0], words[1], words[2],
+	)
+	runtime.KeepAlive(addr)
+	runtime.KeepAlive(data)
+	runtime.KeepAlive(out)
+	return int32(r1)
 }
 
 func registerSym(lib uintptr, fnptr any, name string) (err error) {
